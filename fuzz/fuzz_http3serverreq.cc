@@ -99,6 +99,29 @@ static int stop_sending(nghttp3_conn *conn, int64_t stream_id,
   return fuzzed_data_provider->ConsumeBool() ? NGHTTP3_ERR_CALLBACK_FAILURE : 0;
 }
 
+static nghttp3_ssize read_data(nghttp3_conn *conn, int64_t stream_id,
+                               nghttp3_vec *vec, size_t veccnt,
+                               uint32_t *pflags, void *conn_user_data,
+                               void *stream_user_data) {
+  auto fuzzed_data_provider = static_cast<FuzzedDataProvider *>(conn_user_data);
+
+  auto chunk_size = fuzzed_data_provider->ConsumeIntegral<size_t>();
+  auto chunk = fuzzed_data_provider->ConsumeBytes<uint8_t>(chunk_size);
+
+  if (chunk.size() == 0) {
+    return NGHTTP3_ERR_WOULDBLOCK;
+  }
+
+  vec[0].base = chunk.data();
+  vec[0].len = chunk.size();
+
+  if (fuzzed_data_provider->ConsumeBool()) {
+    *pflags |= NGHTTP3_DATA_FLAG_EOF;
+  }
+
+  return 1;
+};
+
 static int end_stream(nghttp3_conn *conn, int64_t stream_id,
                       void *conn_user_data, void *stream_user_data) {
   auto fuzzed_data_provider = static_cast<FuzzedDataProvider *>(conn_user_data);
@@ -123,8 +146,13 @@ static int end_stream(nghttp3_conn *conn, int64_t stream_id,
     },
   };
 
-  return nghttp3_conn_submit_response(conn, stream_id, nva,
-                                      nghttp3_arraylen(nva), nullptr);
+  nghttp3_data_reader dr = {
+    .read_data = read_data,
+  };
+
+  return nghttp3_conn_submit_response(
+    conn, stream_id, nva, nghttp3_arraylen(nva),
+    fuzzed_data_provider->ConsumeBool() ? &dr : nullptr);
 }
 
 static int reset_stream(nghttp3_conn *conn, int64_t stream_id,
